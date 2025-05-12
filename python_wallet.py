@@ -28,30 +28,47 @@ def build_deposit_transaction(
     gas_price = w3.eth.gas_price
     max_priority_fee_per_gas = w3.eth.max_priority_fee
     max_fee_per_gas = max_priority_fee_per_gas + gas_price
+    
+    # 构建基础交易
     tx = {
         'nonce': nonce,
         'to': contract_address,
         'value': amount,
-        'gas': 21000,
         'maxFeePerGas': max_fee_per_gas,
         'maxPriorityFeePerGas': max_priority_fee_per_gas,
         'chainId': w3.eth.chain_id
     }
+    
+    try:
+        # 估算所需的 gas
+        estimated_gas = w3.eth.estimate_gas(tx)
+        # 添加 20% 的缓冲
+        tx['gas'] = int(estimated_gas * 1.2)
+    except Exception as e:
+        print(f"估算 gas 时出错: {str(e)}")
+        # 如果估算失败，使用一个较大的默认值
+        tx['gas'] = 300000
+    
     return tx
 
-# 要存入的金额，单位为 Wei
-deposit_amount = Web3.to_wei(0.000001, 'ether')
+if __name__ == '__main__':
+    try:
+        # 要存入的金额，单位为 Wei
+        deposit_amount = Web3.to_wei(0.000001, 'ether')
 
-# 构建交易
-tx = build_deposit_transaction(w3, external_account.address, contract_address, deposit_amount)
+        # 构建交易
+        tx = build_deposit_transaction(w3, external_account.address, contract_address, deposit_amount)
 
-# 签名交易
-signed_tx = external_account.sign_transaction(tx)
+        # 签名交易
+        signed_tx = external_account.sign_transaction(tx)
 
-# 发送交易
-tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-print(f"交易哈希: {tx_hash.hex()}")
+        # 发送交易
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+        print(f"交易哈希: {tx_hash.hex()}")
 
-# 等待交易确认
-tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-print(f"交易确认，区块号: {tx_receipt.blockNumber}")
+        # 等待交易确认
+        tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+        print(f"交易确认，区块号: {tx_receipt.blockNumber}")
+        print(f"实际使用的 gas: {tx_receipt.gasUsed}")
+    except Exception as e:
+        print(f"交易执行出错: {str(e)}")
