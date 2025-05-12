@@ -1,0 +1,11 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+
+[profile.networks.sepolia]
+# 使用引号包裹 env()
+url = "${env:SEPOLIA_RPC_URL}"
+# 使用引号包裹 env()，并以字符串数组形式配置
+accounts = ["${env:PRIVATE_KEY}"]
+# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
