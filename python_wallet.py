@@ -10,12 +10,29 @@ if not w3.is_connected():
     print("无法连接到以太坊节点，请检查网络配置")
     exit(1)
 
+# 合约 ABI
+CONTRACT_ABI = [{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"getBalance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address payable","name":"_to","type":"address"},{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"withdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},{"stateMutability":"payable","type":"receive"}]
+# 合约地址
+contract_address = Web3.to_checksum_address(config.contract_address)
+# 初始化合约实例
+contract = w3.eth.contract(address=contract_address, abi=CONTRACT_ABI)
+
+def generate_new_account():
+    """生成新的以太坊账户"""
+    account = Account.create()
+    private_key = account.key.hex()
+    address = account.address
+    return private_key, address
+
+def get_balance(address):
+    """查询账户余额"""
+    balance_wei = w3.eth.get_balance(address)
+    balance_eth = w3.from_wei(balance_wei, 'ether')
+    return balance_wei, balance_eth
+
 # 外部账户私钥和地址
 external_private_key = config.external_private_key
 external_account = Account.from_key(external_private_key)
-
-# 合约地址
-contract_address = Web3.to_checksum_address(config.contract_address)
 
 # 构建向合约存款的交易
 def build_deposit_transaction(
@@ -52,23 +69,91 @@ def build_deposit_transaction(
     return tx
 
 if __name__ == '__main__':
+    # 生成新账户
+    # private_key, address = generate_new_account()
+    # print(f"\n新生成的账户信息:")
+    # print(f"私钥: {private_key}")
+    # print(f"地址: {address}")
+    
+    # 查询余额
+    # balance_wei, balance_eth = get_balance(address)
+    # print(f"\n账户余额:")
+    # print(f"Wei: {balance_wei}")
+    # print(f"ETH: {balance_eth}")
+    #
+    # # 查询当前配置的账户余额
+    # current_balance_wei, current_balance_eth = get_balance(external_account.address)
+    # print(f"\n当前配置账户余额:")
+    # print(f"地址: {external_account.address}")
+    # print(f"Wei: {current_balance_wei}")
+    # print(f"ETH: {current_balance_eth}")
+    
     try:
         # 要存入的金额，单位为 Wei
-        deposit_amount = Web3.to_wei(0.000001, 'ether')
+        deposit_amount = Web3.to_wei(0.00000000001, 'ether')
 
-        # 构建交易
-        tx = build_deposit_transaction(w3, external_account.address, contract_address, deposit_amount)
+        # 构建交易 - 直接发送ETH到合约地址
+        tx = {
+            'from': external_account.address,
+            'to': contract_address,
+            'value': deposit_amount,
+            'nonce': w3.eth.get_transaction_count(external_account.address),
+            'gas': 100000,
+            'gasPrice': w3.eth.gas_price
+        }
 
         # 签名交易
         signed_tx = external_account.sign_transaction(tx)
 
         # 发送交易
         tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        print(f"交易哈希: {tx_hash.hex()}")
+        print(f"\n存款交易哈希: {tx_hash.hex()}")
 
         # 等待交易确认
         tx_receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        print(f"交易确认，区块号: {tx_receipt.blockNumber}")
+        print(f"存款交易确认，区块号: {tx_receipt.blockNumber}")
         print(f"实际使用的 gas: {tx_receipt.gasUsed}")
+
+        # 查询合约中的余额
+        contract_balance = contract.functions.getBalance().call()
+        print(f"合约中的余额: {Web3.from_wei(contract_balance, 'ether')} ETH")
+
+        # 提现操作
+        print("\n开始提现操作...")
+        # 检查是否是合约所有者
+        owner = contract.functions.owner().call()
+        if owner.lower() != external_account.address.lower():
+            print(f"错误：当前账户不是合约所有者。合约所有者地址: {owner}")
+        else:
+            # 构建提现交易
+            withdraw_amount = contract_balance  # 提取全部余额
+            withdraw_tx = contract.functions.withdraw(
+                external_account.address,  # 提现到当前账户
+                withdraw_amount
+            ).build_transaction({
+                'from': external_account.address,
+                'nonce': w3.eth.get_transaction_count(external_account.address),
+                'gas': 100000,
+                'gasPrice': w3.eth.gas_price
+            })
+
+            # 签名提现交易
+            signed_withdraw_tx = external_account.sign_transaction(withdraw_tx)
+
+            # 发送提现交易
+            withdraw_tx_hash = w3.eth.send_raw_transaction(signed_withdraw_tx.raw_transaction)
+            print(f"提现交易哈希: {withdraw_tx_hash.hex()}")
+
+            # 等待提现交易确认
+            withdraw_receipt = w3.eth.wait_for_transaction_receipt(withdraw_tx_hash)
+            print(f"提现交易确认，区块号: {withdraw_receipt.blockNumber}")
+            print(f"实际使用的 gas: {withdraw_receipt.gasUsed}")
+
+            # 再次查询合约余额
+            final_balance = contract.functions.getBalance().call()
+            print(f"提现后合约中的余额: {Web3.from_wei(final_balance, 'ether')} ETH")
+
     except Exception as e:
         print(f"交易执行出错: {str(e)}")
+
+    

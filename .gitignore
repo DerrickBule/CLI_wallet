@@ -13,3 +13,4 @@ docs/
 # Dotenv file
 .env
 config.py
+wallet-step.md
