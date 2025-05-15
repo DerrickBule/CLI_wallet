@@ -1,14 +1,17 @@
 import os
 from web3 import Web3
 from eth_account import Account
-
+from api.database import create_tables, SessionLocal
+from api.services import save_transaction
 import config
-
 # 连接到以太坊节点，这里以 Sepolia 测试网为例
 w3 = Web3(Web3.HTTPProvider(config.RPC_URL))
 if not w3.is_connected():
     print("无法连接到以太坊节点，请检查网络配置")
     exit(1)
+
+# 创建数据库表
+create_tables()
 
 # 合约 ABI
 CONTRACT_ABI = [{"inputs":[],"stateMutability":"nonpayable","type":"constructor"},{"inputs":[],"name":"getBalance","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"},{"inputs":[],"name":"owner","outputs":[{"internalType":"address","name":"","type":"address"}],"stateMutability":"view","type":"function"},{"inputs":[{"internalType":"address payable","name":"_to","type":"address"},{"internalType":"uint256","name":"_amount","type":"uint256"}],"name":"withdraw","outputs":[],"stateMutability":"nonpayable","type":"function"},{"stateMutability":"payable","type":"receive"}]
@@ -68,38 +71,49 @@ def build_deposit_transaction(
     
     return tx
 
+def save_transaction_to_db(tx_receipt, transaction_type):
+    """保存交易数据到数据库"""
+    db = SessionLocal()
+    try:
+        # 获取原始交易数据
+        tx = w3.eth.get_transaction(tx_receipt.transactionHash)
+        
+        save_transaction(
+            db=db,
+            tx_hash=tx_receipt.transactionHash.hex(),
+            block_number=tx_receipt.blockNumber,
+            from_address=tx['from'],
+            to_address=tx['to'],
+            value=tx['value'],
+            gas_used=tx_receipt.gasUsed,
+            gas_price=tx['gasPrice'],
+            status=tx_receipt.status == 1,
+            transaction_type=transaction_type
+        )
+    finally:
+        db.close()
+
 if __name__ == '__main__':
-    # 生成新账户
-    # private_key, address = generate_new_account()
-    # print(f"\n新生成的账户信息:")
-    # print(f"私钥: {private_key}")
-    # print(f"地址: {address}")
-    
-    # 查询余额
-    # balance_wei, balance_eth = get_balance(address)
-    # print(f"\n账户余额:")
-    # print(f"Wei: {balance_wei}")
-    # print(f"ETH: {balance_eth}")
-    #
-    # # 查询当前配置的账户余额
-    # current_balance_wei, current_balance_eth = get_balance(external_account.address)
-    # print(f"\n当前配置账户余额:")
-    # print(f"地址: {external_account.address}")
-    # print(f"Wei: {current_balance_wei}")
-    # print(f"ETH: {current_balance_eth}")
-    
     try:
         # 要存入的金额，单位为 Wei
-        deposit_amount = Web3.to_wei(0.00000000001, 'ether')
+        deposit_amount = Web3.to_wei(0.0001, 'ether')
+
+        # 获取当前nonce
+        nonce = w3.eth.get_transaction_count(external_account.address)
+        
+        # 获取当前gas价格
+        gas_price = w3.eth.gas_price
+        # 增加10%的gas价格以确保交易能被接受
+        gas_price = int(gas_price * 1.1)
 
         # 构建交易 - 直接发送ETH到合约地址
         tx = {
             'from': external_account.address,
             'to': contract_address,
             'value': deposit_amount,
-            'nonce': w3.eth.get_transaction_count(external_account.address),
+            'nonce': nonce,
             'gas': 100000,
-            'gasPrice': w3.eth.gas_price
+            'gasPrice': gas_price
         }
 
         # 签名交易
@@ -114,6 +128,9 @@ if __name__ == '__main__':
         print(f"存款交易确认，区块号: {tx_receipt.blockNumber}")
         print(f"实际使用的 gas: {tx_receipt.gasUsed}")
 
+        # 保存存款交易到数据库
+        save_transaction_to_db(tx_receipt, 'deposit')
+
         # 查询合约中的余额
         contract_balance = contract.functions.getBalance().call()
         print(f"合约中的余额: {Web3.from_wei(contract_balance, 'ether')} ETH")
@@ -125,6 +142,11 @@ if __name__ == '__main__':
         if owner.lower() != external_account.address.lower():
             print(f"错误：当前账户不是合约所有者。合约所有者地址: {owner}")
         else:
+            # 获取新的nonce
+            nonce = w3.eth.get_transaction_count(external_account.address)
+            # 获取新的gas价格并增加10%
+            gas_price = int(w3.eth.gas_price * 1.1)
+            
             # 构建提现交易
             withdraw_amount = contract_balance  # 提取全部余额
             withdraw_tx = contract.functions.withdraw(
@@ -132,9 +154,9 @@ if __name__ == '__main__':
                 withdraw_amount
             ).build_transaction({
                 'from': external_account.address,
-                'nonce': w3.eth.get_transaction_count(external_account.address),
+                'nonce': nonce,
                 'gas': 100000,
-                'gasPrice': w3.eth.gas_price
+                'gasPrice': gas_price
             })
 
             # 签名提现交易
@@ -148,6 +170,9 @@ if __name__ == '__main__':
             withdraw_receipt = w3.eth.wait_for_transaction_receipt(withdraw_tx_hash)
             print(f"提现交易确认，区块号: {withdraw_receipt.blockNumber}")
             print(f"实际使用的 gas: {withdraw_receipt.gasUsed}")
+
+            # 保存提现交易到数据库
+            save_transaction_to_db(withdraw_receipt, 'withdraw')
 
             # 再次查询合约余额
             final_balance = contract.functions.getBalance().call()

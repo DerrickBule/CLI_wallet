@@ -2,6 +2,11 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+remappings = [
+    "@openzeppelin/=lib/openzeppelin-contracts/",
+    "@safe-global/=lib/safe-contracts/",
+    "forge-std/=lib/forge-std/src/"
+]
 
 [profile.networks.sepolia]
 # 使用引号包裹 env()
